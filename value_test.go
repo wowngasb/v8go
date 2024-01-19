@@ -81,6 +81,7 @@ func TestValueString(t *testing.T) {
 	}{
 		{"Number", `13 * 2`, "26"},
 		{"String", `"string"`, "string"},
+		{"String with null character and non-latin unicode", `"a\x00Ω"`, "a\x00Ω"},
 		{"Object", `let obj = {}; obj`, "[object Object]"},
 		{"Function", `let fn = function(){}; fn`, "function(){}"},
 	}
@@ -92,6 +93,51 @@ func TestValueString(t *testing.T) {
 			str := result.String()
 			if str != tt.out {
 				t.Errorf("unexpected result: expected %q, got %q", tt.out, str)
+			}
+		})
+	}
+}
+
+func TestNewValue(t *testing.T) {
+	t.Parallel()
+	ctx := v8.NewContext(nil)
+	iso := ctx.Isolate()
+	defer iso.Dispose()
+	defer ctx.Close()
+
+	tests := []struct {
+		name      string
+		input     interface{}
+		predicate string
+	}{
+		{"string", "s\x00s\x00", `str => str === "s\x00s\x00"`},
+		{"int32", int32(36), `int => int === 36`},
+		{"bool", true, `b => b === true`},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			val, err := ctx.RunScript(tt.predicate, "test.js")
+			if err != nil {
+				t.Fatal(err)
+			}
+			fn, err := val.AsFunction()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			jsVal, err := v8.NewValue(iso, tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := fn.Call(ctx.Global(), jsVal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Boolean() {
+				t.Fatal("unexpected result: expected true, got false")
 			}
 		})
 	}
@@ -663,5 +709,64 @@ func TestValueMarshalJSON(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestValueArrayBufferContents(t *testing.T) {
+	t.Parallel()
+	iso := v8.NewIsolate()
+	defer iso.Dispose()
+
+	ctx := v8.NewContext(iso)
+	defer ctx.Close()
+
+	val, err := ctx.RunScript(`
+	  (()=>{
+			let buf = new SharedArrayBuffer(1024);
+			let arr = new Int8Array(buf);
+			arr[0] = 42;
+			arr[1] = 52;
+			return buf;
+		})();
+	`, "test.js")
+
+	if err != nil {
+		t.Fatalf("failed to run script: %v", err)
+	}
+
+	if !val.IsSharedArrayBuffer() {
+		t.Fatalf("expected SharedArrayBuffer value")
+	}
+
+	buf, cleanup, err := val.SharedArrayBufferGetContents()
+	if err != nil {
+		t.Fatalf("error getting array buffer contents: %#v", err)
+	}
+	defer cleanup()
+
+	if len(buf) != 1024 {
+		t.Fatalf("expected len(buf) to be 1024")
+	}
+
+	if buf[0] != 42 {
+		t.Fatalf("expected buf[0] to be 42")
+	}
+
+	if buf[1] != 52 {
+		t.Fatalf("expected buf[1] to be 52")
+	}
+
+	if buf[3] != 0 {
+		t.Fatalf("expected buf[1] to be 0")
+	}
+
+	// ensure there's an error if we call the method on something that isn't a SharedArrayBuffer
+	val, err = ctx.RunScript("7", "test2.js")
+	if err != nil {
+		t.Fatalf("error running trivial script")
+	}
+	_, _, err = val.SharedArrayBufferGetContents()
+	if err == nil {
+		t.Fatalf("Expected an error trying call SharedArrayBufferGetContents on value of incorrect type")
 	}
 }

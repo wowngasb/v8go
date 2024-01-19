@@ -54,14 +54,14 @@ func Null(iso *Isolate) *Value {
 }
 
 // NewValue will create a primitive value. Supported values types to create are:
-//   string -> V8::String
-//   int32 -> V8::Integer
-//   uint32 -> V8::Integer
-//   bool -> V8::Boolean
-//   int64 -> V8::BigInt
-//   uint64 -> V8::BigInt
-//   bool -> V8::Boolean
-//   *big.Int -> V8::BigInt
+//
+//	string -> V8::String
+//	int32 -> V8::Integer
+//	uint32 -> V8::Integer
+//	int64 -> V8::BigInt
+//	uint64 -> V8::BigInt
+//	bool -> V8::Boolean
+//	*big.Int -> V8::BigInt
 func NewValue(iso *Isolate, val interface{}) (*Value, error) {
 	if iso == nil {
 		return nil, errors.New("v8go: failed to create new Value: Isolate cannot be <nil>")
@@ -73,7 +73,7 @@ func NewValue(iso *Isolate, val interface{}) (*Value, error) {
 	case string:
 		cstr := C.CString(v)
 		defer C.free(unsafe.Pointer(cstr))
-		rtn := C.NewValueString(iso.ptr, cstr)
+		rtn := C.NewValueString(iso.ptr, cstr, C.int(len(v)))
 		return valueResult(nil, rtn)
 	case int32:
 		rtnVal = &Value{
@@ -199,13 +199,12 @@ func (v *Value) Boolean() bool {
 // DetailString provide a string representation of this value usable for debugging.
 func (v *Value) DetailString() string {
 	rtn := C.ValueToDetailString(v.ptr)
-	if rtn.string == nil {
+	if rtn.data == nil {
 		err := newJSError(rtn.error)
 		panic(err) // TODO: Return a fallback value
 	}
-	s := rtn.string
-	defer C.free(unsafe.Pointer(s))
-	return C.GoString(s)
+	defer C.free(unsafe.Pointer(rtn.data))
+	return C.GoStringN(rtn.data, rtn.length)
 }
 
 // Int32 perform the equivalent of `Number(value)` in JS and convert the result to a
@@ -242,8 +241,8 @@ func (v *Value) Object() *Object {
 // print their definition.
 func (v *Value) String() string {
 	s := C.ValueToString(v.ptr)
-	defer C.free(unsafe.Pointer(s))
-	return C.GoString(s)
+	defer C.free(unsafe.Pointer(s.data))
+	return C.GoStringN(s.data, C.int(s.length))
 }
 
 // Uint32 perform the equivalent of `Number(value)` in JS and convert the result to an
@@ -533,6 +532,11 @@ func (v *Value) IsProxy() bool {
 	return C.ValueIsProxy(v.ptr) != 0
 }
 
+// Release this value.  Using the value after calling this function will result in undefined behavior.
+func (v *Value) Release() {
+	C.ValueRelease(v.ptr)
+}
+
 // IsWasmModuleObject returns true if this value is a `WasmModuleObject`.
 func (v *Value) IsWasmModuleObject() bool {
 	// TODO(rogchap): requires test case
@@ -576,4 +580,21 @@ func (v *Value) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return []byte(jsonStr), nil
+}
+
+func (v *Value) SharedArrayBufferGetContents() ([]byte, func(), error) {
+	if !v.IsSharedArrayBuffer() {
+		return nil, nil, errors.New("v8go: value is not a SharedArrayBuffer")
+	}
+
+	backingStore := C.SharedArrayBufferGetBackingStore(v.ptr)
+	release := func() {
+		C.BackingStoreRelease(backingStore)
+	}
+
+	byte_ptr := (*byte)(unsafe.Pointer(C.BackingStoreData(backingStore)))
+	byte_size := C.BackingStoreByteLength(backingStore)
+	byte_slice := unsafe.Slice(byte_ptr, byte_size)
+
+	return byte_slice, release, nil
 }

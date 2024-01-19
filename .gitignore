@@ -6,8 +6,8 @@
 .gclient_entries
 
 deps/darwin-x86_64/libv8_debug.a
-
+deps/.gclient_previous*
 c.out
-
+.idea/*
 /v8go.test
 .idea/

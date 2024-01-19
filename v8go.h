@@ -6,11 +6,6 @@
 #define V8GO_H
 #ifdef __cplusplus
 
-#if defined(__MINGW32__) || defined(__MINGW64__)
-// MinGW header files do not implicitly include windows.h
-struct _EXCEPTION_POINTERS;
-#endif
-
 #include "libplatform/libplatform.h"
 #include "v8-profiler.h"
 #include "v8.h"
@@ -39,6 +34,10 @@ typedef const v8CpuProfileNode* CpuProfileNodePtr;
 typedef struct v8ScriptCompilerCachedData v8ScriptCompilerCachedData;
 typedef const v8ScriptCompilerCachedData* ScriptCompilerCachedDataPtr;
 #endif
+
+// Opaque to both C and C++
+typedef struct v8BackingStore v8BackingStore;
+typedef v8BackingStore* BackingStorePtr;
 
 #include <stddef.h>
 #include <stdint.h>
@@ -89,10 +88,14 @@ typedef struct {
 
 typedef struct CPUProfileNode {
   CpuProfileNodePtr ptr;
+  unsigned nodeId;
+  int scriptId;
   const char* scriptResourceName;
   const char* functionName;
   int lineNumber;
   int columnNumber;
+  unsigned hitCount;
+  const char* bailoutReason;
   int childrenCount;
   struct CPUProfileNode** children;
 } CPUProfileNode;
@@ -111,7 +114,8 @@ typedef struct {
 } RtnValue;
 
 typedef struct {
-  const char* string;
+  const char* data;
+  int length;
   RtnError error;
 } RtnString;
 
@@ -166,6 +170,7 @@ extern void CPUProfileDelete(CPUProfile* ptr);
 extern ContextPtr NewContext(IsolatePtr iso_ptr,
                              TemplatePtr global_template_ptr,
                              int ref);
+extern int ContextRetainedValueCount(ContextPtr ctx);
 extern void ContextFree(ContextPtr ptr);
 extern RtnValue RunScript(ContextPtr ctx_ptr,
                           const char* source,
@@ -198,7 +203,7 @@ extern ValuePtr NewValueNull(IsolatePtr iso_ptr);
 extern ValuePtr NewValueUndefined(IsolatePtr iso_ptr);
 extern ValuePtr NewValueInteger(IsolatePtr iso_ptr, int32_t v);
 extern ValuePtr NewValueIntegerFromUnsigned(IsolatePtr iso_ptr, uint32_t v);
-extern RtnValue NewValueString(IsolatePtr iso_ptr, const char* v);
+extern RtnValue NewValueString(IsolatePtr iso_ptr, const char* v, int v_length);
 extern ValuePtr NewValueBoolean(IsolatePtr iso_ptr, int v);
 extern ValuePtr NewValueNumber(IsolatePtr iso_ptr, double v);
 extern ValuePtr NewValueBigInt(IsolatePtr iso_ptr, int64_t v);
@@ -207,7 +212,8 @@ extern RtnValue NewValueBigIntFromWords(IsolatePtr iso_ptr,
                                         int sign_bit,
                                         int word_count,
                                         const uint64_t* words);
-const char* ValueToString(ValuePtr ptr);
+void ValueRelease(ValuePtr ptr);
+extern RtnString ValueToString(ValuePtr ptr);
 const uint32_t* ValueToArrayIndex(ValuePtr ptr);
 int ValueToBoolean(ValuePtr ptr);
 int32_t ValueToInt32(ValuePtr ptr);
@@ -304,6 +310,11 @@ ValuePtr FunctionSourceMapUrl(ValuePtr ptr);
 
 const char* Version();
 extern void SetFlags(const char* flags);
+
+extern BackingStorePtr SharedArrayBufferGetBackingStore(ValuePtr ptr);
+extern void BackingStoreRelease(BackingStorePtr ptr);
+extern void* BackingStoreData(BackingStorePtr ptr);
+extern size_t BackingStoreByteLength(BackingStorePtr ptr);
 
 #ifdef __cplusplus
 }  // extern "C"
